@@ -201,6 +201,7 @@ enum FullscreenWorkplaceScene {
     }
 
     private static func monitor(_ c: CGContext, task: WorkplaceTask, snapshot: SceneSnapshot, rise: CGFloat, time: TimeInterval) {
+        let live = snapshot.taskOrigin?.isLive == true, agent = snapshot.taskOrigin?.agentName ?? "Codex"
         let r = monitorShell(c, slot: task.slot, rise: rise)
         let upper = task.slot >= 3
         let fresh = snapshot.isFresh()
@@ -211,7 +212,7 @@ enum FullscreenWorkplaceScene {
         label(String(format: "会话 %02d", task.slot + 1), at: CGPoint(x: r.minX + 29, y: r.maxY - 34), size: 11, color: glow, weight: .medium, width: 80)
         label(status, at: CGPoint(x: r.maxX - 84, y: r.maxY - 34), size: 11, color: statusColor, weight: .medium, width: 73)
         label(task.title, at: CGPoint(x: r.minX + 15, y: r.maxY - 72), size: upper ? 15 : 18, color: tint(0xE1EACB), weight: .semibold, width: r.width - 30)
-        if snapshot.taskOrigin == .codex {
+        if live {
             executionContent(c, task: task, snapshot: snapshot, screen: r, upper: upper, fresh: fresh, accent: statusColor)
             block(c, CGRect(x: r.maxX - 11, y: r.minY + 3, width: 3, height: 3), statusColor)
             return
@@ -238,7 +239,7 @@ enum FullscreenWorkplaceScene {
             else if let started = task.startedAt {
                 let seconds = max(0, Int(snapshot.updatedAt.timeIntervalSince(started)))
                 elapsed = String(format: "已运行 %02d:%02d", seconds / 60, seconds % 60)
-            } else { elapsed = snapshot.taskOrigin == .codex ? "Codex 实时会话" : "模拟 Codex 会话" }
+            } else { elapsed = live ? "\(agent) 实时会话" : "模拟 Codex 会话" }
             label(elapsed, at: CGPoint(x: r.minX + 15, y: r.minY + 15), size: 10, color: tint(0x7F9E8D), width: r.width - 30)
         }
         block(c, CGRect(x: r.maxX - 11, y: r.minY + 3, width: 3, height: 3), statusColor)
@@ -249,15 +250,16 @@ enum FullscreenWorkplaceScene {
     private static func executionContent(_ c: CGContext, task: WorkplaceTask, snapshot: SceneSnapshot,
                                          screen r: CGRect, upper: Bool, fresh: Bool, accent: NSColor) {
         let details = task.executionDetails
+        let agent = snapshot.taskOrigin?.agentName ?? "Codex"
         let action: String
         if !fresh { action = "状态未知 · 已断开连接" }
         else if task.status == .running, details?.phase == .tool, let tool = details?.toolName {
             action = "工具 · \(tool)"
         } else {
             switch task.status {
-            case .running: action = details?.phase == .thinking ? "Codex 正在思考" : "Codex 正在执行任务"
-            case .waiting: action = "等待你在 Codex 中确认"
-            case .failed: action = "需要你在 Codex 中处理"
+            case .running: action = details?.phase == .thinking ? "\(agent) 正在思考" : "\(agent) 正在执行任务"
+            case .waiting: action = "等待你在 \(agent) 中确认"
+            case .failed: action = "需要你在 \(agent) 中处理"
             case .completed: action = "本轮任务已完成"
             case .idle: action = "等待下一项指令"
             }
@@ -293,6 +295,7 @@ enum FullscreenWorkplaceScene {
     }
 
     private static func overviewMonitor(_ c: CGContext, slot: Int, snapshot: SceneSnapshot, rise: CGFloat) {
+        let live = snapshot.taskOrigin?.isLive == true, agent = snapshot.taskOrigin?.agentName ?? "Codex"
         let r = monitorShell(c, slot: slot, rise: rise)
         let fresh = snapshot.isFresh()
         let accent = fresh ? tint(0x89C6A1) : tint(0x95A18E)
@@ -305,8 +308,8 @@ enum FullscreenWorkplaceScene {
         } else if slot == 1 {
             let tasks = snapshot.tasks.sorted { $0.slot < $1.slot }
             if tasks.isEmpty {
-                label(snapshot.taskOrigin == .codex ? "暂无运行会话" : "暂无会话", at: CGPoint(x: r.minX + 15, y: r.maxY - 76), size: 18, color: accent, width: r.width - 30)
-                label(snapshot.taskOrigin == .codex ? "Codex 开工后在这里同步" : "添加任务后，屏幕会亮起进展", at: CGPoint(x: r.minX + 15, y: r.minY + 43), size: 11, color: tint(0xA6BDA4), width: r.width - 30)
+                label(live ? "暂无运行会话" : "暂无会话", at: CGPoint(x: r.minX + 15, y: r.maxY - 76), size: 18, color: accent, width: r.width - 30)
+                label(live ? "\(agent) 开工后在这里同步" : "添加任务后，屏幕会亮起进展", at: CGPoint(x: r.minX + 15, y: r.minY + 43), size: 11, color: tint(0xA6BDA4), width: r.width - 30)
             } else {
                 for (index, task) in tasks.prefix(3).enumerated() {
                     let y = r.maxY - 74 - CGFloat(index) * 27
@@ -326,7 +329,7 @@ enum FullscreenWorkplaceScene {
             }
         } else {
             label("工位待机", at: CGPoint(x: r.minX + 15, y: r.maxY - 77), size: 20, color: accent, weight: .medium, width: r.width - 30)
-            label(snapshot.taskOrigin == .codex ? "等待 Codex 的真实任务" : "添加会话后，在这里显示任务", at: CGPoint(x: r.minX + 15, y: r.minY + 43), size: 12, color: tint(0xA6BDA4), width: r.width - 30)
+            label(live ? "等待 \(agent) 的真实任务" : "添加会话后，在这里显示任务", at: CGPoint(x: r.minX + 15, y: r.minY + 43), size: 12, color: tint(0xA6BDA4), width: r.width - 30)
         }
         block(c, CGRect(x: r.maxX - 11, y: r.minY + 3, width: 3, height: 3), accent)
     }
@@ -499,16 +502,17 @@ enum FullscreenWorkplaceScene {
                   rect: CGRect(x:content.minX,y:828,width:width,height:36), size:33, weight:.semibold)
     }
     private static func statusPlaque(_ c: CGContext, snapshot: SceneSnapshot, actionTitle: String? = nil) {
+        let live = snapshot.taskOrigin?.isLive == true, agent = snapshot.taskOrigin?.agentName ?? "Codex"
         let r = CGRect(x: 585, y: 32, width: 516, height: 35)
         panel(c, r, edge: tint(0x54371F, alpha: 0.8), fill: tint(0xE9C180, alpha: 0.94), border: 3)
         let status: String
         if let title = actionTitle { status = "\(title) · 小憩片刻，任务状态照常同步" }
-        else if !snapshot.isFresh() { status = snapshot.taskOrigin == .codex ? "Codex 未连接 · 分身休息中" : "工位离线 · 分身休息中" }
+        else if !snapshot.isFresh() { status = live ? "\(agent) 未连接 · 分身休息中" : "工位离线 · 分身休息中" }
         else if snapshot.demoRunning { status = "模拟演示 · 每 60 秒循环 · 菜单栏可返回控制台" }
-        else if snapshot.taskOrigin == .codex {
+        else if live {
             let total = snapshot.totalSessionCount ?? snapshot.tasks.count
             let overflow = total > 6 ? " · 展示前 6 个" : ""
-            status = "Codex · \(total) 个会话\(overflow) · \(snapshot.resolvedPose() == .slacking ? "休息中" : snapshot.resolvedPose() == .standing ? "站着打工" : "坐着打工")"
+            status = "\(agent) · \(total) 个会话\(overflow) · \(snapshot.resolvedPose() == .slacking ? "休息中" : snapshot.resolvedPose() == .standing ? "站着打工" : "坐着打工")"
         }
         else if snapshot.resolvedPose() == .slacking { status = "摸鱼时间 · 分身正在床上睡觉" }
         else { status = "模拟 Codex · \(snapshot.tasks.count) 个会话 · \(snapshot.resolvedPose() == .standing ? "站着打工" : "坐着打工")" }

@@ -15,7 +15,12 @@ enum EmployeeMode: String, Codable, CaseIterable {
 enum WorkPosture: String, Codable { case sitting, standing }
 enum EmployeePose: String, Codable { case sitting, slacking, standing }
 enum EmployeeActivity: String, Codable { case working, waiting, resting, offline }
-enum WorkplaceTaskOrigin: String, Codable { case simulation, codex }
+enum WorkplaceTaskOrigin: String, Codable {
+    case simulation, codex, claude
+    /// Live origins mirror real sessions read-only; the simulator is editable.
+    var isLive: Bool { self != .simulation }
+    var agentName: String { self == .claude ? "Claude" : "Codex" }
+}
 
 enum WorkplaceBackground: String, Codable, CaseIterable {
     case room, outdoors
