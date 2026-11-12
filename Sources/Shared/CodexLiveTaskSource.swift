@@ -1,29 +1,44 @@
 import Foundation
 
+/// A read-only producer of session observations. Codex desktop IPC and the
+/// Claude Code session registry both publish this renderer-independent shape.
+protocol LiveSessionObserver: AnyObject {
+    var onUpdate: ((CodexObservationResult) -> Void)? { get set }
+    func start()
+    func stop()
+}
+
+extension CodexDesktopObserver: LiveSessionObserver {}
+
 /// Read-only desktop observations drive the same snapshot used by the saver.
 /// Runtime idle is deliberately distinct from a confirmed successful turn.
 final class CodexLiveTaskSource: TaskSource {
     private(set) var snapshot: SceneSnapshot
-    private(set) var connectionMessage = "正在连接 Codex…"
+    private(set) var connectionMessage: String
     private(set) var isConnected = false
     private(set) var totalSessionCount = 0
     var onChange: (() -> Void)?
-    private let observer: CodexDesktopObserver
+    private let observer: LiveSessionObserver
+    let origin: WorkplaceTaskOrigin
+    private var agent: String { origin.agentName }
     private var started = false
     private var records: [String: WorkplaceTask] = [:]
     private var completionEligible: Set<String> = []
 
-    init(snapshot seed: SceneSnapshot = .empty(), observer: CodexDesktopObserver = CodexDesktopObserver()) {
+    init(snapshot seed: SceneSnapshot = .empty(), observer: LiveSessionObserver = CodexDesktopObserver(),
+         origin: WorkplaceTaskOrigin = .codex) {
         self.observer = observer
+        self.origin = origin == .claude ? .claude : .codex
+        connectionMessage = "正在连接 \(self.origin.agentName)…"
         var initial = SceneSnapshot.empty()
         initial.mode = seed.mode
         initial.preferredPosture = seed.preferredPosture
-        if seed.taskOrigin == .codex {
+        if seed.taskOrigin == self.origin {
             initial.completedToday = seed.completedToday
             initial.summaryDay = seed.summaryDay
         }
         // Restored titles alone are not evidence that a task is still running.
-        initial.taskOrigin = .codex
+        initial.taskOrigin = self.origin
         initial.sourceMessage = connectionMessage
         initial.isOnline = false
         initial.totalSessionCount = 0
@@ -68,7 +83,7 @@ final class CodexLiveTaskSource: TaskSource {
         normalizeDay(at: now)
         connectionMessage = String(result.message.prefix(240))
         isConnected = result.isConnected
-        snapshot.taskOrigin = .codex
+        snapshot.taskOrigin = origin
         snapshot.sourceMessage = connectionMessage
         snapshot.updatedAt = now
         snapshot.isOnline = isConnected
@@ -95,13 +110,13 @@ final class CodexLiveTaskSource: TaskSource {
                     ["waitingOnApproval", "waitingOnUserInput", "waitingForUserInput"].contains($0)
                 }
                 status = waiting ? .waiting : .running
-                step = waiting ? "Codex 正在等你确认" : "Codex 正在执行任务"
-                next = waiting ? "请在 Codex 会话中处理" : "实时同步会话状态"
+                step = waiting ? "\(agent) 正在等你确认" : "\(agent) 正在执行任务"
+                next = waiting ? "请在 \(agent) 会话中处理" : "实时同步会话状态"
             } else if runtime == "systemError" || session.turnStatus == "failed" {
                 completionEligible.remove(identity)
                 status = .failed
-                step = "Codex 报告运行错误"
-                next = "请在 Codex 会话中查看"
+                step = "\(agent) 报告运行错误"
+                next = "请在 \(agent) 会话中查看"
             } else if runtime == "idle", old != nil {
                 // Idle only proves that execution stopped. Only an explicit
                 // completed turn can increment the successful completion count.
@@ -127,11 +142,11 @@ final class CodexLiveTaskSource: TaskSource {
             }
             let detailedStep: String
             if status == .running, let details {
-                detailedStep = details.phase == .tool ? "调用工具 · \(details.toolName ?? "Codex")"
-                    : details.phase == .thinking ? "Codex 正在思考" : step
+                detailedStep = details.phase == .tool ? "调用工具 · \(details.toolName ?? agent)"
+                    : details.phase == .thinking ? "\(agent) 正在思考" : step
             } else { detailedStep = step }
             records[identity] = WorkplaceTask(id: identity,
-                title: String((title.isEmpty ? "Codex 会话" : title).prefix(160)), status: status,
+                title: String((title.isEmpty ? "\(agent) 会话" : title).prefix(160)), status: status,
                 slot: old?.slot ?? -1, progress: nil, currentStep: String(detailedStep.prefix(160)),
                 startedAt: details == nil ? nil : session.startedAt, nextStep: next, executionDetails: details,
                 hostID: session.hostID, hostName: session.hostName)

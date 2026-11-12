@@ -59,7 +59,11 @@ final class WorkplaceAppDelegate: NSObject, NSApplicationDelegate, NSWindowDeleg
     private let launchWallpaper: Bool
     private let presentation = ScenePresentationController()
     private var simulator: TaskSimulator!
-    private var liveSource: CodexLiveTaskSource?
+    private var codexSource: CodexLiveTaskSource?
+    private var claudeSource: CodexLiveTaskSource?
+    private var liveOrigin: WorkplaceTaskOrigin = .codex
+    private var liveSource: CodexLiveTaskSource? { liveOrigin == .claude ? claudeSource : codexSource }
+    private var liveAgent: String { liveOrigin.agentName }
     private var usesLiveSource = true
     private var sourcePicker: NSSegmentedControl!
     private var sourceHint: NSTextField!
@@ -125,7 +129,7 @@ final class WorkplaceAppDelegate: NSObject, NSApplicationDelegate, NSWindowDeleg
         }
         var simulationSeed = restored
         // A live task must never become an editable, simulated copy after restart.
-        if restored.taskOrigin == .codex {
+        if restored.taskOrigin?.isLive == true {
             simulationSeed = .empty()
             simulationSeed.mode = restored.mode
             simulationSeed.preferredPosture = restored.preferredPosture
@@ -136,7 +140,9 @@ final class WorkplaceAppDelegate: NSObject, NSApplicationDelegate, NSWindowDeleg
         simulator = TaskSimulator(snapshot: simulationSeed)
         simulator.tick()
         usesLiveSource = !launchDemo
-        liveSource = CodexLiveTaskSource(snapshot: restored)
+        liveOrigin = restored.taskOrigin == .claude ? .claude : .codex
+        codexSource = CodexLiveTaskSource(snapshot: restored)
+        claudeSource = CodexLiveTaskSource(snapshot: restored, observer: ClaudeSessionObserver(), origin: .claude)
         if launchDemo { simulator.setDemoRunning(true) }
         buildMenu()
         buildWindow()
@@ -146,9 +152,11 @@ final class WorkplaceAppDelegate: NSObject, NSApplicationDelegate, NSWindowDeleg
         presentation.onExitImmersive = { [weak self] in self?.openWindow() }
         presentation.onWallpaperChanged = { [weak self] enabled in self?.refreshWallpaperControls(enabled: enabled) }
         ambientActionsEnabled = true
-        liveSource?.onChange = { [weak self] in
-            guard let self = self, self.usesLiveSource else { return }
-            self.update()
+        for source in [codexSource, claudeSource] {
+            source?.onChange = { [weak self, weak source] in
+                guard let self = self, self.usesLiveSource, source === self.liveSource else { return }
+                self.update()
+            }
         }
         update()
         if usesLiveSource { liveSource?.start() }
@@ -321,10 +329,11 @@ final class WorkplaceAppDelegate: NSObject, NSApplicationDelegate, NSWindowDeleg
         sourceGroup.orientation = .vertical
         sourceGroup.alignment = .leading
         sourceGroup.spacing = 6
-        sourcePicker = NSSegmentedControl(labels: ["Codex 实时", "模拟"], trackingMode: .selectOne, target: self, action: #selector(sourceChanged))
+        sourcePicker = NSSegmentedControl(labels: ["Codex", "Claude", "模拟"], trackingMode: .selectOne, target: self, action: #selector(sourceChanged))
         sourcePicker.segmentStyle = .rounded
-        sourcePicker.setWidth(116, forSegment: 0)
-        sourcePicker.setWidth(86, forSegment: 1)
+        sourcePicker.setWidth(70, forSegment: 0)
+        sourcePicker.setWidth(70, forSegment: 1)
+        sourcePicker.setWidth(62, forSegment: 2)
         sourcePicker.setAccessibilityLabel("任务来源")
         sourceGroup.addArrangedSubview(sourcePicker)
         sourceHint = label("基础三屏，随任务扩展。", size: 11, color: AppPalette.secondary)
@@ -480,6 +489,7 @@ final class WorkplaceAppDelegate: NSObject, NSApplicationDelegate, NSWindowDeleg
         let demo = menu.addItem(withTitle: "播放 / 停止演示", action: #selector(toggleDemo), keyEquivalent: "")
         demo.target = self
         menu.addItem(withTitle: "使用 Codex 实时任务", action: #selector(useLiveTasks), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "使用 Claude 实时任务", action: #selector(useClaudeTasks), keyEquivalent: "").target = self
         menu.addItem(withTitle: "屏幕场景与环境…", action: #selector(openSceneSettings), keyEquivalent: "").target = self
         let settings = menu.addItem(withTitle: "壁纸与屏保设置", action: #selector(openScreenSaverSettings), keyEquivalent: "")
         settings.target = self
@@ -624,16 +634,16 @@ final class WorkplaceAppDelegate: NSObject, NSApplicationDelegate, NSWindowDeleg
             }
         }
         walkMenuItem?.title = theme.title(for: EmployeeAction.walk)
-        sourcePicker.selectedSegment = usesLiveSource ? 0 : 1
+        sourcePicker.selectedSegment = usesLiveSource ? (liveOrigin == .claude ? 1 : 0) : 2
         let demoHint = underwater ? "任务会显示在水中的潜水艇上。\n模拟任务仅用于查看效果。"
             : "基础三屏，随任务扩展。\n模拟任务仅用于查看效果。"
-        sourceHint.stringValue = usesLiveSource ? (liveSource?.connectionMessage ?? "正在连接 Codex…") : demoHint
+        sourceHint.stringValue = usesLiveSource ? (liveSource?.connectionMessage ?? "正在连接 \(liveAgent)…") : demoHint
         sourceHint.toolTip = sourceHint.stringValue
-        sourceFootnote.stringValue = usesLiveSource ? "本机与开发机 · 只读同步\n关闭窗口后，菜单栏继续运行" : "模拟任务 · 无需联网\n关闭窗口后，菜单栏继续运行"
-        sourceMenuTitle?.title = usesLiveSource ? "虚拟工位 · Codex 实时" : "虚拟工位 · 模拟任务"
+        sourceFootnote.stringValue = usesLiveSource ? "\(liveOrigin == .claude ? "本机 Claude Code" : "本机与开发机") · 只读同步\n关闭窗口后，菜单栏继续运行" : "模拟任务 · 无需联网\n关闭窗口后，菜单栏继续运行"
+        sourceMenuTitle?.title = usesLiveSource ? "虚拟工位 · \(liveAgent) 实时" : "虚拟工位 · 模拟任务"
         if usesLiveSource {
             let total = liveSource?.totalSessionCount ?? snapshot.tasks.count
-            taskCount.stringValue = total > snapshot.tasks.count ? "会话  \(snapshot.tasks.count) / \(total) · 显示前六" : "Codex  \(total) 个会话"
+            taskCount.stringValue = total > snapshot.tasks.count ? "会话  \(snapshot.tasks.count) / \(total) · 显示前六" : "\(liveAgent)  \(total) 个会话"
             taskCount.toolTip = underwater ? "按真实会话同步，最多同时显示六艘任务潜水艇。"
                 : "按真实会话同步；最多同时显示六块任务屏。"
         } else {
@@ -673,7 +683,7 @@ final class WorkplaceAppDelegate: NSObject, NSApplicationDelegate, NSWindowDeleg
             previousSourceConnected = connected
             hasBuiltTasks = true
         }
-        syncLabel.stringValue = usesLiveSource ? ((liveSource?.isConnected ?? false) ? "● Codex 实时" : "○ Codex 未连接") : "● 模拟任务"
+        syncLabel.stringValue = usesLiveSource ? ((liveSource?.isConnected ?? false) ? "● \(liveAgent) 实时" : "○ \(liveAgent) 未连接") : "● 模拟任务"
         syncLabel.textColor = usesLiveSource && !(liveSource?.isConnected ?? false) ? AppPalette.secondary : AppPalette.green
         syncLabel.toolTip = (usesLiveSource ? "\(liveSource?.connectionMessage ?? "正在连接")\n" : "") + "状态文件：\(stateURL.path)"
         guard persist else { return }
@@ -767,7 +777,7 @@ final class WorkplaceAppDelegate: NSObject, NSApplicationDelegate, NSWindowDeleg
         }
         for child in taskList.arrangedSubviews { taskList.removeArrangedSubview(child); child.removeFromSuperview() }
         if tasks.isEmpty {
-            let emptyText = usesLiveSource ? ((liveSource?.isConnected ?? false) ? "当前没有运行中的会话。\nCodex 开始工作后会自动出现。" : "正在等候 Codex 状态。\n连接后会自动显示真实任务。") : "工位很安静。\n添加任务，在屏幕上查看进展。"
+            let emptyText = usesLiveSource ? ((liveSource?.isConnected ?? false) ? "当前没有运行中的会话。\n\(liveAgent) 开始工作后会自动出现。" : "正在等候 \(liveAgent) 状态。\n连接后会自动显示真实任务。") : "工位很安静。\n添加任务，在屏幕上查看进展。"
             let empty = label(emptyText, size: 11, color: AppPalette.secondary)
             empty.maximumNumberOfLines = 3
             empty.widthAnchor.constraint(equalToConstant: 210).isActive = true
@@ -807,7 +817,7 @@ final class WorkplaceAppDelegate: NSObject, NSApplicationDelegate, NSWindowDeleg
                 let status = label(text, size: 11, color: color)
                 status.lineBreakMode = .byTruncatingTail
                 status.widthAnchor.constraint(equalToConstant: 212).isActive = true
-                status.toolTip = "来源：\(task.sourceLabel)\n真实状态由 Codex 同步，在 Codex 会话中处理。"
+                status.toolTip = "来源：\(task.sourceLabel)\n真实状态由 \(liveAgent) 同步，在 \(liveAgent) 会话中处理。"
                 block.addArrangedSubview(status)
                 if connected, let details = task.executionDetails {
                     if task.status == .running, details.phase == .tool, let tool = details.toolName {
@@ -880,14 +890,23 @@ final class WorkplaceAppDelegate: NSObject, NSApplicationDelegate, NSWindowDeleg
         else { mutate { $0.setMode(mode) } }
     }
 
-    @objc private func sourceChanged() { selectSource(live: sourcePicker.selectedSegment == 0) }
-    @objc private func useLiveTasks() { selectSource(live: true) }
+    @objc private func sourceChanged() {
+        let segment = sourcePicker.selectedSegment
+        if segment == 2 { selectSource(live: false) }
+        else { selectSource(live: true, origin: segment == 1 ? .claude : .codex) }
+    }
+    @objc private func useLiveTasks() { selectSource(live: true, origin: .codex) }
+    @objc private func useClaudeTasks() { selectSource(live: true, origin: .claude) }
 
-    private func selectSource(live: Bool) {
-        guard live != usesLiveSource else { return }
+    private func selectSource(live: Bool, origin: WorkplaceTaskOrigin? = nil) {
+        let target = origin ?? liveOrigin
+        guard live != usesLiveSource || (live && target != liveOrigin) else { return }
         let preferences = currentSnapshot
         simulator.setDemoRunning(false)
+        // Only one live observer runs at a time.
+        if usesLiveSource { liveSource?.stop() }
         usesLiveSource = live
+        liveOrigin = target
         hasBuiltTasks = false
         if live {
             if preferences.mode == .automatic {
@@ -896,7 +915,6 @@ final class WorkplaceAppDelegate: NSObject, NSApplicationDelegate, NSWindowDeleg
             liveSource?.setMode(preferences.mode, at: Date())
             liveSource?.start()
         } else {
-            liveSource?.stop()
             if preferences.mode == .automatic {
                 simulator.setMode(preferences.preferredPosture == .standing ? .standing : .sitting)
             }
@@ -1002,7 +1020,7 @@ final class WorkplaceAppDelegate: NSObject, NSApplicationDelegate, NSWindowDeleg
     @objc private func showAbout() {
         let alert = NSAlert()
         alert.messageText = "虚拟工位 0.9.4"
-        alert.informativeText = "把任务交给工位里的自己。\n\nCodex 实时任务与模拟演示可切换。\n实时模式只读同步本机与已连接开发机的会话，未知进度不显示百分比。\n支持独立窗口、桌面背景和 macOS 系统屏保。"
+        alert.informativeText = "把任务交给工位里的自己。\n\nCodex、Claude Code 实时任务与模拟演示可切换。\n实时模式只读同步本机与已连接开发机的会话，未知进度不显示百分比。\n支持独立窗口、桌面背景和 macOS 系统屏保。"
         alert.addButton(withTitle: "继续上班")
         alert.runModal()
     }

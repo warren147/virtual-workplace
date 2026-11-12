@@ -77,7 +77,7 @@ final class WorkplaceSceneView: NSView {
         } else {
             let pose = snapshot.resolvedPose()
             let title = pose == .standing ? "站着打工" : pose == .sitting ? "坐着打工" : "摸鱼"
-            let origin = snapshot.taskOrigin == .codex ? "Codex" : "模拟"
+            let origin = snapshot.taskOrigin.flatMap { $0.isLive ? $0.agentName : nil } ?? "模拟"
             let action = snapshot.action.flatMap { $0.isActive() ? "，正在\($0.kind.title)" : nil } ?? ""
             setAccessibilityValue("\(title)，\(snapshot.tasks.count) 个\(origin)会话\(action)，\(world.weather.title)")
         }
